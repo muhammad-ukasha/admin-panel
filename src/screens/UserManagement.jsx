@@ -1,40 +1,90 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import axiosInstance from "../utils/axios";
+
 
 export default function UserManagement() {
-  const [users, setUsers] = useState([
-    { id: 1, name: "Jane Cooper", email: "jane@microsoft.com" },
-    { id: 2, name: "Floyd Miles", email: "floyd@yahoo.com" },
-    { id: 3, name: "Ronald Richards", email: "ronald@adobe.com" },
-    { id: 4, name: "Marvin McKinney", email: "marvin@tesla.com" },
-    { id: 5, name: "Jerome Bell", email: "jerome@google.com" },
-    { id: 6, name: "Kathryn Murphy", email: "kathryn@microsoft.com" },
-    { id: 7, name: "Jacob Jones", email: "jacob@yahoo.com" },
-    { id: 8, name: "Kristin Watson", email: "kristin@facebook.com" },
-  ]);
-
+  // State
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [editingUser, setEditingUser] = useState(null);
 
-  const handleDelete = (id) => {
-    const updated = users.filter(user => user.id !== id);
-    setUsers(updated);
+  // Fetch users on mount
+  useEffect(() => {
+    const fetchUsers = async () => {
+      try {
+        const res = await axiosInstance.get("/users");
+        console.log(res.data)
+        setUsers(res.data);
+      } catch (err) {
+        setError(err.response?.data?.message || err.message);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchUsers();
+  }, []);
+
+  // Delete user
+  const handleDelete = async (id) => {
+    if (!window.confirm("Delete this user?")) return;
+    try {
+      await axiosInstance.delete(`/users/${id}`);
+      setUsers((prev) => prev.filter((u) => u.id !== id));
+    } catch (err) {
+      setError(err.response?.data?.message || err.message);
+    }
   };
 
-  const handleSave = () => {
-    const updated = users.map(user => (user.id === editingUser.id ? editingUser : user));
-    setUsers(updated);
-    setEditingUser(null);
+  // Save edited user
+  const handleSave = async () => {
+    try {
+      const payload = {
+        firstName: editingUser.name.split(" ")[0],
+        lastName: editingUser.name.split(" ").slice(1).join(" "),
+        email: editingUser.email,
+      };
+      const res = await axiosInstance.put(
+        `/users/${editingUser.id}`,
+        payload
+      );
+      setUsers((prev) =>
+        prev.map((u) => (u.id === res.data.id ? res.data : u))
+      );
+      setEditingUser(null);
+    } catch (err) {
+      setError(err.response?.data?.message || err.message);
+    }
   };
+
+  if (loading) return <div className="p-6">Loading users…</div>;
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-8 p-6">
+      {error && (
+        <div className="bg-red-100 text-red-700 p-4 rounded">{error}</div>
+      )}
+
       <div className="bg-white p-6 rounded-2xl shadow-md">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-6">
-          <h2 className="text-2xl font-bold text-gray-800">User Management</h2>
+          <h2 className="text-2xl font-bold text-gray-800">
+            User Management
+          </h2>
           <div className="flex items-center gap-4 mt-4 md:mt-0">
             <input
               type="text"
               placeholder="Search..."
               className="border rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500"
+              onChange={(e) => {
+                const q = e.target.value.toLowerCase();
+                setUsers((prev) =>
+                  prev.filter(
+                    (u) =>
+                      u.name.toLowerCase().includes(q) ||
+                      u.email.toLowerCase().includes(q)
+                  )
+                );
+              }}
             />
             <div className="flex items-center border rounded-lg px-4 py-2 cursor-pointer">
               <span className="text-gray-600 mr-2">Sort by:</span> Newest
@@ -55,9 +105,12 @@ export default function UserManagement() {
             </thead>
             <tbody>
               {users.map((user) => (
-                <tr key={user.id} className="border-t hover:bg-gray-50">
-                  <td className="py-4 px-6">{user.id}</td>
-                  <td className="py-4 px-6">{user.name}</td>
+                <tr
+                  key={user.id}
+                  className="border-t hover:bg-gray-50"
+                >
+                  <td className="py-4 px-6">{user._id}</td>
+                  <td className="py-4 px-6">{user.firstname} {user.lastname}</td>
                   <td className="py-4 px-6">{user.email}</td>
                   <td className="py-4 px-6 flex gap-2">
                     <button
@@ -83,20 +136,32 @@ export default function UserManagement() {
       {/* Edit Form */}
       {editingUser && (
         <div className="bg-white p-6 rounded-2xl shadow-md space-y-4">
-          <h3 className="text-xl font-bold text-gray-800 mb-4">Edit User</h3>
+          <h3 className="text-xl font-bold text-gray-800 mb-4">
+            Edit User
+          </h3>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <input
               type="text"
               value={editingUser.name}
-              onChange={(e) => setEditingUser({ ...editingUser, name: e.target.value })}
+              onChange={(e) =>
+                setEditingUser((u) => ({
+                  ...u,
+                  name: e.target.value,
+                }))
+              }
               className="border rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500"
               placeholder="Name"
             />
             <input
-              type="text"
+              type="email"
               value={editingUser.email}
-              onChange={(e) => setEditingUser({ ...editingUser, email: e.target.value })}
+              onChange={(e) =>
+                setEditingUser((u) => ({
+                  ...u,
+                  email: e.target.value,
+                }))
+              }
               className="border rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500"
               placeholder="Email"
             />
@@ -119,5 +184,5 @@ export default function UserManagement() {
         </div>
       )}
     </div>
-  );
+);
 }

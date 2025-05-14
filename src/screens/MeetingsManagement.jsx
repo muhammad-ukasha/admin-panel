@@ -1,11 +1,8 @@
-import { useState } from "react";
-import {
-  FaEdit,
-  FaPlus,
-  FaTimes,
-  FaUserPlus,
-  FaTrash,
-} from "react-icons/fa";
+import { useState, useEffect } from "react";
+import { FaEdit, FaPlus, FaTimes, FaUserPlus, FaTrash } from "react-icons/fa";
+import { ToastContainer, toast } from "react-toastify";
+import "react-toastify/dist/ReactToastify.css";
+import axiosInstance from "../utils/axios";
 
 // Mock user lookup (replace with your GET /users)
 const MOCK_USERS = [
@@ -13,44 +10,85 @@ const MOCK_USERS = [
   { email: "taha@example.com", name: "Taha Mallick" },
   { email: "pc19659.rayyan@gmail.com", name: "Rayyan Gmail" },
 ];
-
+const fetchUserById = async (userId) => {
+  try {
+    const response = await axiosInstance.get(`/users/${userId}`);
+    return response.data; // Assuming the response contains firstName, lastName, and email
+  } catch (err) {
+    console.error("Error fetching user data:", err);
+    return null; // Handle error appropriately
+  }
+};
 export default function MeetingsManagement() {
   // === State ===
   const [tab, setTab] = useState("upcoming");
-  const [meetings, setMeetings] = useState([
-    {
-      id: "4220-483-10932",
-      name: "Microsoft Event 2.0",
-      subject: "Microsoft Annual Product Launch",
-      date: "2025-05-01",
-      time: "10:00",
-      description: "Quarterly product showcase.",
-      participants: [
-        { email: "rayyan@example.com", status: "" },
-        { email: "taha@example.com", status: "" },
-      ],
-    },
-  ]);
-
+  const [meetings, setMeetings] = useState([]);
   const [selectedMeeting, setSelectedMeeting] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
 
   // Create/Edit Modal
   const [showCreateEdit, setShowCreateEdit] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
   const [formMeeting, setFormMeeting] = useState({
     id: "",
-    name: "",
+    title: "",
     subject: "",
     date: "",
     time: "",
     description: "",
     participants: [],
+    newParticipant: "",
   });
+  const [participantsDetails, setParticipantsDetails] = useState({});
+
+  const fetchParticipantsDetails = async () => {
+    const details = {};
+    for (let p of selectedMeeting.participants) {
+      const user = await fetchUserById(p.user);
+      if (user) {
+        console.log(user)
+
+        details[
+          p.user
+        ] = `${user.firstname} ${user.lastname}`;
+        console.log(details)
+      }
+    }
+    setParticipantsDetails(details);
+  };
 
   // Add Participants Modal
   const [showAddModal, setShowAddModal] = useState(false);
   const [addModalMeetingId, setAddModalMeetingId] = useState(null);
   const [addModalInput, setAddModalInput] = useState("");
+
+  useEffect(() => {
+    fetchMeetings();
+    if (selectedMeeting) {
+      fetchParticipantsDetails();
+    }
+  }, [selectedMeeting]);
+  const getParticipantDetails = async (userId) => {
+    // Fetch the user data using userId
+    const user = await fetchUserById(userId);
+    console.log(userId);
+    if (user) {
+      return `${user.firstName} ${user.lastName} (${user.email})`; // Format as desired
+    }
+    return "Unknown User"; // Fallback in case user data is missing
+  };
+  const fetchMeetings = async () => {
+    setIsLoading(true);
+    try {
+      const res = await axiosInstance.get("/list-meeting");
+      setMeetings(res.data);
+    } catch (err) {
+      console.error("Error fetching meetings", err);
+      toast.error("Failed to fetch meetings");
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   // === Helpers ===
   const getNameByEmail = (email) => {
@@ -61,89 +99,161 @@ export default function MeetingsManagement() {
   const resetForm = () => {
     setFormMeeting({
       id: "",
-      name: "",
+      title: "",
       subject: "",
       date: "",
       time: "",
       description: "",
       participants: [],
+      newParticipant: "",
     });
   };
 
   // === Handlers ===
-
-  // Open Create modal
   const openCreate = () => {
     resetForm();
     setIsEditMode(false);
     setShowCreateEdit(true);
   };
 
-  // Open Edit modal
-  const openEdit = (m) => {
-    setFormMeeting({ ...m });
+  const openEdit = (meeting) => {
+    setFormMeeting({
+      id: meeting._id || meeting.id,
+      title: meeting.title,
+      subject: meeting.subject,
+      date: meeting.date,
+      time: meeting.time,
+      description: meeting.description,
+      participants: Array.isArray(meeting.participants)
+        ? meeting.participants.map((p) =>
+            typeof p === "string" ? { email: p } : p
+          )
+        : [],
+      newParticipant: "",
+    });
     setIsEditMode(true);
     setShowCreateEdit(true);
   };
 
-  // Save Create/Edit
-  const saveMeeting = () => {
-    if (isEditMode) {
-      setMeetings((ms) =>
-        ms.map((m) => (m.id === formMeeting.id ? formMeeting : m))
-      );
-    } else {
-      setMeetings((ms) => [
-        ...ms,
-        { ...formMeeting, id: Date.now().toString() },
-      ]);
+  const saveMeeting = async () => {
+    if (!formMeeting.title || !formMeeting.date || !formMeeting.time) {
+      toast.error("Please fill in all required fields");
+      return;
     }
-    setShowCreateEdit(false);
+
+    if (isEditMode) {
+      try {
+        const payload = {
+          title: formMeeting.title,
+          subject: formMeeting.subject,
+          description: formMeeting.description,
+          date: formMeeting.date,
+          time: formMeeting.time,
+          participants: formMeeting.participants.map((p) => p.email),
+        };
+
+        await axiosInstance.put(`/editmeetings/${formMeeting.id}`, payload);
+        toast.success("Meeting updated successfully!");
+        fetchMeetings();
+        setShowCreateEdit(false);
+      } catch (err) {
+        console.error(err);
+        toast.error("Failed to update meeting");
+      }
+      return;
+    }
+
+    // Create new meeting
+    try {
+      const payload = {
+        title: formMeeting.title,
+        subject: formMeeting.subject,
+        date: formMeeting.date,
+        time: formMeeting.time,
+        description: formMeeting.description,
+        organizer: "Admin",
+        participants: formMeeting.participants.map((p) => p.email),
+      };
+
+      if (formMeeting.participants.length === 0) {
+        toast.error("Please add at least one participant.");
+        return;
+      }
+
+      await axiosInstance.post("/addmeeting", payload);
+      toast.success("Meeting created successfully!");
+      fetchMeetings();
+      setShowCreateEdit(false);
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to create meeting");
+    }
   };
 
-  // Delete
-  const deleteMeeting = (id) => {
-    setMeetings((ms) => ms.filter((m) => m.id !== id));
-    if (selectedMeeting?.id === id) setSelectedMeeting(null);
+  const deleteMeeting = async (id) => {
+    try {
+      await axiosInstance.delete(`/deletemeeting/${id}`);
+      toast.success("Meeting deleted successfully!");
+      fetchMeetings();
+      if (selectedMeeting?.id === id) setSelectedMeeting(null);
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to delete meeting");
+    }
   };
 
-  // Open Add-Participants modal for an existing meeting
   const openAddParticipants = (id) => {
     setAddModalMeetingId(id);
     setAddModalInput("");
     setShowAddModal(true);
   };
 
-  // Add to existing meeting
-  const addParticipantToMeeting = () => {
+  const addParticipantToMeeting = async () => {
     if (!addModalInput.trim()) return;
-    setMeetings((ms) =>
-      ms.map((m) =>
-        m.id === addModalMeetingId
-          ? {
-              ...m,
-              participants: [
-                ...m.participants,
-                { email: addModalInput.trim(), status: "" },
-              ],
-            }
-          : m
-      )
-    );
-    setAddModalInput("");
+
+    try {
+      const meeting = meetings.find((m) => m._id === addModalMeetingId);
+      const updatedParticipants = [
+        ...meeting.participants,
+        { email: addModalInput.trim() },
+      ];
+
+      await axiosInstance.put(`/editmeetings/${addModalMeetingId}`, {
+        participants: updatedParticipants.map((p) => p.email),
+      });
+
+      toast.success("Participant added successfully!");
+      fetchMeetings();
+      setAddModalInput("");
+      setShowAddModal(false);
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to add participant");
+    }
   };
 
-  // Update Attendance
-  const updateAttendance = () => {
-    setMeetings((ms) =>
-      ms.map((m) =>
-        m.id === selectedMeeting.id ? selectedMeeting : m
-      )
-    );
-    alert("Attendance updated.");
+  const updateAttendance = async () => {
+    try {
+      const payload = {
+        attendance: selectedMeeting.participants.map((p) => ({
+          email: p.email,
+          status: p.status,
+        })),
+      };
+
+      await axiosInstance.put(
+        `/meetings/${selectedMeeting._id}/attendance`,
+        payload
+      );
+
+      toast.success("Attendance updated!");
+      fetchMeetings();
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to update attendance");
+    }
   };
 
-  // Change a participant’s status
   const changeStatus = (idx, status) => {
     setSelectedMeeting((m) => {
       const ps = m.participants.map((p, i) =>
@@ -184,61 +294,60 @@ export default function MeetingsManagement() {
       {/* Meetings Table */}
       <div className="bg-white p-6 rounded-2xl shadow-md">
         <h2 className="text-2xl font-bold mb-4">Meetings Management</h2>
-        <table className="min-w-full text-left">
-          <thead>
-            <tr className="text-gray-600 uppercase text-sm">
-              <th className="py-3 px-6">Meeting ID</th>
-              <th className="py-3 px-6">Name</th>
-              <th className="py-3 px-6">Participants</th>
-              <th className="py-3 px-6">Subject</th>
-              <th className="py-3 px-6">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {meetings.map((m) => (
-              <tr
-                key={m.id}
-                className="border-t hover:bg-gray-50"
-              >
-                <td className="py-4 px-6">
-                  <button
-                    onClick={() => setSelectedMeeting(m)}
-                    className="text-purple-700 underline"
-                  >
-                    {m.id}
-                  </button>
-                </td>
-                <td className="py-4 px-6">{m.name}</td>
-                <td className="py-4 px-6">
-                  {m.participants.length}
-                </td>
-                <td className="py-4 px-6">{m.subject}</td>
-                <td className="py-4 px-6 flex gap-2">
-                  <button
-                    onClick={() => openEdit(m)}
-                    className="bg-green-500 text-white px-3 py-1 rounded-lg text-sm"
-                  >
-                    <FaEdit />
-                  </button>
-                  <button
-                    onClick={() =>
-                      openAddParticipants(m.id)
-                    }
-                    className="bg-blue-500 text-white px-3 py-1 rounded-lg text-sm"
-                  >
-                    <FaUserPlus />
-                  </button>
-                  <button
-                    onClick={() => deleteMeeting(m.id)}
-                    className="bg-red-500 text-white px-3 py-1 rounded-lg text-sm"
-                  >
-                    <FaTrash />
-                  </button>
-                </td>
+        {isLoading ? (
+          <div className="text-center py-8">Loading meetings...</div>
+        ) : (
+          <table className="min-w-full text-left">
+            <thead>
+              <tr className="text-gray-600 uppercase text-sm">
+                <th className="py-3 px-6">Meeting ID</th>
+                <th className="py-3 px-6">Name</th>
+                <th className="py-3 px-6">Participants</th>
+                <th className="py-3 px-6">Subject</th>
+                <th className="py-3 px-6">Actions</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {meetings.map((m) => (
+                <tr key={m._id} className="border-t hover:bg-gray-50">
+                  <td className="py-4 px-6">
+                    <button
+                      onClick={() => setSelectedMeeting(m)}
+                      className="text-purple-700 underline"
+                    >
+                      {m.meetingId}
+                    </button>
+                  </td>
+                  <td className="py-4 px-6">{m.title}</td>
+                  <td className="py-4 px-6">
+                    {Array.isArray(m.participants) ? m.participants.length : 0}
+                  </td>
+                  <td className="py-4 px-6">{m.subject}</td>
+                  <td className="py-4 px-6 flex gap-2">
+                    <button
+                      onClick={() => openEdit(m)}
+                      className="bg-green-500 text-white px-3 py-1 rounded-lg text-sm"
+                    >
+                      <FaEdit />
+                    </button>
+                    <button
+                      onClick={() => openAddParticipants(m._id)}
+                      className="bg-blue-500 text-white px-3 py-1 rounded-lg text-sm"
+                    >
+                      <FaUserPlus />
+                    </button>
+                    <button
+                      onClick={() => deleteMeeting(m._id)}
+                      className="bg-red-500 text-white px-3 py-1 rounded-lg text-sm"
+                    >
+                      <FaTrash />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
 
       {/* Details / Attendance / Transcription */}
@@ -246,77 +355,56 @@ export default function MeetingsManagement() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Details */}
           <div className="bg-white p-6 rounded-2xl shadow-md">
-            <h3 className="text-xl font-bold mb-4">
-              Meeting Details
-            </h3>
+            <h3 className="text-xl font-bold mb-4">Meeting Details</h3>
             <p>
-              <strong>ID:</strong> {selectedMeeting.id}
+              <strong>Meeting Code:</strong> {selectedMeeting.meetingId}
             </p>
             <p>
-              <strong>Name:</strong> {selectedMeeting.name}
+              <strong>Name:</strong> {selectedMeeting.title}
             </p>
             <p>
-              <strong>Subject:</strong>{" "}
-              {selectedMeeting.subject}
+              <strong>Subject:</strong> {selectedMeeting.subject}
             </p>
             <p>
-              <strong>
-                When:
-              </strong>{" "}
-              {selectedMeeting.date} @{" "}
+              <strong>When:</strong> {selectedMeeting.date} @{" "}
               {selectedMeeting.time}
             </p>
-            <p className="mt-2">
-              {selectedMeeting.description}
-            </p>
+            <p className="mt-2">{selectedMeeting.description}</p>
           </div>
 
           {/* Attendance */}
           <div className="bg-white p-6 rounded-2xl shadow-md">
-            <h3 className="text-xl font-bold mb-4">
-              Attendance Management
-            </h3>
+            <h3 className="text-xl font-bold mb-4">Attendance Management</h3>
             <table className="min-w-full text-sm">
               <thead>
                 <tr className="border-b text-gray-600">
-                  <th className="py-2 px-4 text-left">
-                    Participant
-                  </th>
+                  <th className="py-2 px-4 text-left">Participant</th>
                   <th className="text-center">Present</th>
                   <th className="text-center">Remote</th>
                   <th className="text-center">Absent</th>
                 </tr>
               </thead>
               <tbody>
-                {selectedMeeting.participants.map(
-                  (p, idx) => (
-                    <tr
-                      key={idx}
-                      className="border-b"
-                    >
-                      <td className="py-2 px-4">
-                        {getNameByEmail(p.email)}
+                {selectedMeeting.participants.map((p, idx) => (
+                  <tr key={idx} className="border-b">
+                    <td className="py-2 px-4">
+                      {/* Use getParticipantDetails to display full name and email */}
+                      {/* {getParticipantDetails(p.userId)} */}
+                      {participantsDetails[p.user] || 'Loading...'}
+
+                    </td>
+                    {["present", "remote", "absent"].map((st) => (
+                      <td key={st} className="text-center">
+                        <input
+                          type="radio"
+                          name={`att-${idx}`}
+                          checked={p.status === st}
+                          onChange={() => changeStatus(idx, st)}
+                        />
                       </td>
-                      {["present", "remote", "absent"].map(
-                        (st) => (
-                          <td
-                            key={st}
-                            className="text-center"
-                          >
-                            <input
-                              type="radio"
-                              name={`att-${idx}`}
-                              checked={p.status === st}
-                              onChange={() =>
-                                changeStatus(idx, st)
-                              }
-                            />
-                          </td>
-                        )
-                      )}
-                    </tr>
-                  )
-                )}
+                    ))}
+                  </tr>
+                ))}
               </tbody>
             </table>
             <button
@@ -329,9 +417,7 @@ export default function MeetingsManagement() {
 
           {/* Transcription */}
           <div className="bg-white p-6 rounded-2xl shadow-md">
-            <h3 className="text-xl font-bold mb-4">
-              Transcription
-            </h3>
+            <h3 className="text-xl font-bold mb-4">Transcription</h3>
             <p className="text-sm text-gray-600">
               (Mock) Your meeting transcript goes here…
             </p>
@@ -350,20 +436,18 @@ export default function MeetingsManagement() {
               &times;
             </button>
             <h3 className="text-lg font-bold">
-              {isEditMode
-                ? "Edit Meeting"
-                : "Schedule a Meeting"}
+              {isEditMode ? "Edit Meeting" : "Schedule a Meeting"}
             </h3>
 
             <input
               type="text"
               placeholder="Name"
               className="w-full border px-4 py-2 rounded-lg"
-              value={formMeeting.name}
+              value={formMeeting.title}
               onChange={(e) =>
                 setFormMeeting((fm) => ({
                   ...fm,
-                  name: e.target.value,
+                  title: e.target.value,
                 }))
               }
             />
@@ -414,7 +498,72 @@ export default function MeetingsManagement() {
                 }))
               }
             />
+            <div className="space-y-2">
+              <label className="block font-medium text-sm text-gray-700">
+                Add Participants (by Email)
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="email"
+                  placeholder="Enter participant email"
+                  className="flex-1 border px-4 py-2 rounded-lg"
+                  value={formMeeting.newParticipant}
+                  onChange={(e) =>
+                    setFormMeeting((fm) => ({
+                      ...fm,
+                      newParticipant: e.target.value,
+                    }))
+                  }
+                />
+                <button
+                  type="button"
+                  className="bg-green-500 text-white px-4 py-2 rounded-lg"
+                  onClick={() => {
+                    if (!formMeeting.newParticipant?.trim()) return;
+                    const email = formMeeting.newParticipant.trim();
+                    if (
+                      !formMeeting.participants.find((p) => p.email === email)
+                    ) {
+                      setFormMeeting((fm) => ({
+                        ...fm,
+                        participants: [...fm.participants, { email }],
+                        newParticipant: "",
+                      }));
+                    }
+                  }}
+                >
+                  Add
+                </button>
+              </div>
 
+              {/* Participant List */}
+              {formMeeting.participants.length > 0 && (
+                <ul className="mt-2 list-disc pl-5 text-sm">
+                  {formMeeting.participants.map((p, idx) => (
+                    <li
+                      key={idx}
+                      className="flex items-center justify-between pr-2"
+                    >
+                      {p.email}
+                      <button
+                        type="button"
+                        className="text-red-500 text-xs ml-2"
+                        onClick={() =>
+                          setFormMeeting((fm) => ({
+                            ...fm,
+                            participants: fm.participants.filter(
+                              (_, i) => i !== idx
+                            ),
+                          }))
+                        }
+                      >
+                        Remove
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
             <button
               onClick={saveMeeting}
               className="w-full bg-blue-600 text-white py-2 rounded-lg"
@@ -435,17 +584,13 @@ export default function MeetingsManagement() {
             >
               &times;
             </button>
-            <h3 className="text-lg font-bold">
-              Add Participants
-            </h3>
+            <h3 className="text-lg font-bold">Add Participants</h3>
             <input
               type="email"
               placeholder="Email"
               className="w-full border px-4 py-2 rounded-lg"
               value={addModalInput}
-              onChange={(e) =>
-                setAddModalInput(e.target.value)
-              }
+              onChange={(e) => setAddModalInput(e.target.value)}
             />
             <button
               onClick={addParticipantToMeeting}
@@ -455,9 +600,9 @@ export default function MeetingsManagement() {
             </button>
             <ul className="list-disc pl-5">
               {meetings
-                .find((m) => m.id === addModalMeetingId)
-                ?.participants.map((p, i) => (
-                  <li key={i}>{p.email}</li>
+                .find((m) => m._id === addModalMeetingId)
+                ?.participants?.map((p, i) => (
+                  <li key={i}>{typeof p === "string" ? p : p.email}</li>
                 ))}
             </ul>
             <button
@@ -469,6 +614,7 @@ export default function MeetingsManagement() {
           </div>
         </div>
       )}
+      <ToastContainer position="top-right" autoClose={3000} />
     </div>
   );
 }
