@@ -3,29 +3,49 @@ import { FaEdit, FaPlus, FaTimes, FaUserPlus, FaTrash } from "react-icons/fa";
 import { ToastContainer, toast } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
 import axiosInstance from "../utils/axios";
-
+import axios from "axios";
 // Mock user lookup (replace with your GET /users)
 const MOCK_USERS = [
   { email: "rayyan@example.com", name: "Rayyan Khan" },
   { email: "taha@example.com", name: "Taha Mallick" },
   { email: "pc19659.rayyan@gmail.com", name: "Rayyan Gmail" },
 ];
-const fetchUserById = async (userId) => {
-  try {
-    const response = await axiosInstance.get(`/users/${userId}`);
-    return response.data; // Assuming the response contains firstName, lastName, and email
-  } catch (err) {
-    console.error("Error fetching user data:", err);
-    return null; // Handle error appropriately
-  }
-};
+
 export default function MeetingsManagement() {
   // === State ===
+  const ESP32_BASE_URL = "http://192.168.0.178"; // 👈 Change to your actual ESP32 IP
+
+  const controlESP = async (action) => {
+    console.log(selectedMeeting.meetingId)
+    try {
+      if (action == "start") {
+        const res = await axios.get(
+          `${ESP32_BASE_URL}/${action}?meetingId=${selectedMeeting.meetingId}`
+        );
+        if (res.status === 200) {
+          toast.success(`Meeting ${res.data.status}`);
+        } else {
+          toast.error("ESP32 error");
+        }
+      } else {
+        const res = await axios.get(`${ESP32_BASE_URL}/${action}`);
+        if (res.status === 200) {
+          toast.success(`Meeting ${res.data.status}`);
+        } else {
+          toast.error("ESP32 error");
+        }
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to communicate with ESP32");
+    }
+  };
+
   const [tab, setTab] = useState("upcoming");
   const [meetings, setMeetings] = useState([]);
   const [selectedMeeting, setSelectedMeeting] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
-
+  const [originalParticipants, setOriginalParticipants] = useState([]);
   // Create/Edit Modal
   const [showCreateEdit, setShowCreateEdit] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
@@ -46,12 +66,10 @@ export default function MeetingsManagement() {
     for (let p of selectedMeeting.participants) {
       const user = await fetchUserById(p.user);
       if (user) {
-        console.log(user)
+        console.log(user);
 
-        details[
-          p.user
-        ] = `${user.firstname} ${user.lastname}`;
-        console.log(details)
+        details[p.user] = `${user.firstname} ${user.lastname}`;
+        console.log(details);
       }
     }
     setParticipantsDetails(details);
@@ -65,7 +83,7 @@ export default function MeetingsManagement() {
   useEffect(() => {
     fetchMeetings();
     if (selectedMeeting) {
-      fetchParticipantsDetails();
+      // fetchParticipantsDetails();
     }
   }, [selectedMeeting]);
   const getParticipantDetails = async (userId) => {
@@ -117,6 +135,22 @@ export default function MeetingsManagement() {
   };
 
   const openEdit = (meeting) => {
+    const participants = Array.isArray(meeting.participants)
+      ? meeting.participants.map((p) => {
+          if (p.user?.email) {
+            return {
+              email: p.user.email,
+              firstname: p.user.firstname,
+              lastname: p.user.lastname,
+            };
+          } else if (p.email) {
+            return { email: p.email };
+          } else {
+            return { email: "unknown@example.com" };
+          }
+        })
+      : [];
+
     setFormMeeting({
       id: meeting._id || meeting.id,
       title: meeting.title,
@@ -124,13 +158,13 @@ export default function MeetingsManagement() {
       date: meeting.date,
       time: meeting.time,
       description: meeting.description,
-      participants: Array.isArray(meeting.participants)
-        ? meeting.participants.map((p) =>
-            typeof p === "string" ? { email: p } : p
-          )
-        : [],
+      participants,
       newParticipant: "",
     });
+
+    // Store original emails for diffing
+    setOriginalParticipants(participants.map((p) => p.email));
+    // console.log(originalParticipants);
     setIsEditMode(true);
     setShowCreateEdit(true);
   };
@@ -141,7 +175,15 @@ export default function MeetingsManagement() {
       return;
     }
 
+    const updatedEmails = formMeeting.participants.map((p) => p.email);
+    const add = updatedEmails.filter(
+      (email) => !originalParticipants.includes(email)
+    );
+    const remove = originalParticipants.filter(
+      (email) => !updatedEmails.includes(email)
+    );
     if (isEditMode) {
+      // console.log(formMeeting);
       try {
         const payload = {
           title: formMeeting.title,
@@ -149,15 +191,21 @@ export default function MeetingsManagement() {
           description: formMeeting.description,
           date: formMeeting.date,
           time: formMeeting.time,
-          participants: formMeeting.participants.map((p) => p.email),
         };
 
         await axiosInstance.put(`/editmeetings/${formMeeting.id}`, payload);
+        if (add.length || remove.length) {
+          await axiosInstance.put(`/meetings/${formMeeting.id}/participants`, {
+            add,
+            remove,
+          });
+        }
+
         toast.success("Meeting updated successfully!");
         fetchMeetings();
         setShowCreateEdit(false);
       } catch (err) {
-        console.error(err);
+        console.error("err ", err);
         toast.error("Failed to update meeting");
       }
       return;
@@ -179,13 +227,14 @@ export default function MeetingsManagement() {
         toast.error("Please add at least one participant.");
         return;
       }
-
       await axiosInstance.post("/addmeeting", payload);
+      console.log(payload);
+
       toast.success("Meeting created successfully!");
       fetchMeetings();
       setShowCreateEdit(false);
     } catch (err) {
-      console.error(err);
+      console.error(err.message);
       toast.error("Failed to create meeting");
     }
   };
@@ -209,45 +258,48 @@ export default function MeetingsManagement() {
   };
 
   const addParticipantToMeeting = async () => {
-    if (!addModalInput.trim()) return;
+    const email = addModalInput.trim();
+    if (!email) return;
 
     try {
-      const meeting = meetings.find((m) => m._id === addModalMeetingId);
-      const updatedParticipants = [
-        ...meeting.participants,
-        { email: addModalInput.trim() },
-      ];
-
-      await axiosInstance.put(`/editmeetings/${addModalMeetingId}`, {
-        participants: updatedParticipants.map((p) => p.email),
+      // Call backend to add participant
+      await axiosInstance.put(`/meetings/${addModalMeetingId}/participants`, {
+        add: [email],
+        remove: [],
       });
 
       toast.success("Participant added successfully!");
+
+      // Refresh meetings to show updated participants
       fetchMeetings();
+
       setAddModalInput("");
-      setShowAddModal(false);
     } catch (err) {
       console.error(err);
       toast.error("Failed to add participant");
     }
   };
+  const changeStatus1 = (idx, status) => {
+    setSelectedMeeting((prev) => {
+      const updated = [...prev.participants];
+      updated[idx] = { ...updated[idx], status };
+      return { ...prev, participants: updated };
+    });
+  };
 
   const updateAttendance = async () => {
     try {
-      const payload = {
-        attendance: selectedMeeting.participants.map((p) => ({
-          email: p.email,
-          status: p.status,
-        })),
-      };
+      const attendance = selectedMeeting.participants.map((p) => ({
+        email: p.user?.email || p.email,
+        status: p.status || "absent", // default to "absent" if not selected
+      }));
 
-      await axiosInstance.put(
-        `/meetings/${selectedMeeting._id}/attendance`,
-        payload
-      );
+      await axiosInstance.put(`/meetings/${selectedMeeting._id}/attendance`, {
+        attendance,
+      });
 
       toast.success("Attendance updated!");
-      fetchMeetings();
+      fetchMeetings(); // refresh list
     } catch (err) {
       console.error(err);
       toast.error("Failed to update attendance");
@@ -312,7 +364,15 @@ export default function MeetingsManagement() {
                 <tr key={m._id} className="border-t hover:bg-gray-50">
                   <td className="py-4 px-6">
                     <button
-                      onClick={() => setSelectedMeeting(m)}
+                      onClick={() =>
+                        setSelectedMeeting({
+                          ...m,
+                          participants: m.participants.map((p) => ({
+                            ...p,
+                            status: p.attendanceStatus || "absent", // sync status for UI
+                          })),
+                        })
+                      }
                       className="text-purple-700 underline"
                     >
                       {m.meetingId}
@@ -371,7 +431,29 @@ export default function MeetingsManagement() {
             </p>
             <p className="mt-2">{selectedMeeting.description}</p>
           </div>
-
+          <div className="bg-white p-6 rounded-2xl shadow-md">
+            <h3 className="text-xl font-bold mb-4">Audio Recorder Controls</h3>
+            <div className="flex gap-4">
+              <button
+                onClick={() => controlESP("start")}
+                className="bg-green-600 text-white px-4 py-2 rounded-lg"
+              >
+                ▶️ Start
+              </button>
+              <button
+                onClick={() => controlESP("stop")}
+                className="bg-yellow-500 text-white px-4 py-2 rounded-lg"
+              >
+                ⏸️ Pause
+              </button>
+              <button
+                onClick={() => controlESP("stop")}
+                className="bg-red-600 text-white px-4 py-2 rounded-lg"
+              >
+                🛑 End Meeting
+              </button>
+            </div>
+          </div>
           {/* Attendance */}
           <div className="bg-white p-6 rounded-2xl shadow-md">
             <h3 className="text-xl font-bold mb-4">Attendance Management</h3>
@@ -388,10 +470,9 @@ export default function MeetingsManagement() {
                 {selectedMeeting.participants.map((p, idx) => (
                   <tr key={idx} className="border-b">
                     <td className="py-2 px-4">
-                      {/* Use getParticipantDetails to display full name and email */}
-                      {/* {getParticipantDetails(p.userId)} */}
-                      {participantsDetails[p.user] || 'Loading...'}
-
+                      {p.user?.firstname && p.user?.lastname
+                        ? `${p.user.firstname} ${p.user.lastname}`
+                        : p.user?.email || "Unknown"}
                     </td>
                     {["present", "remote", "absent"].map((st) => (
                       <td key={st} className="text-center">
@@ -544,7 +625,11 @@ export default function MeetingsManagement() {
                       key={idx}
                       className="flex items-center justify-between pr-2"
                     >
-                      {p.email}
+                      <span>
+                        {p.firstname && p.lastname
+                          ? `${p.firstname} ${p.lastname} (${p.email})`
+                          : p.email}
+                      </span>
                       <button
                         type="button"
                         className="text-red-500 text-xs ml-2"
@@ -598,13 +683,23 @@ export default function MeetingsManagement() {
             >
               Add
             </button>
-            <ul className="list-disc pl-5">
+            <ul className="list-disc pl-5 text-sm">
               {meetings
                 .find((m) => m._id === addModalMeetingId)
-                ?.participants?.map((p, i) => (
-                  <li key={i}>{typeof p === "string" ? p : p.email}</li>
-                ))}
+                ?.participants?.map((p, i) => {
+                  const email =
+                    typeof p === "string"
+                      ? p
+                      : p.email || p.user?.email || "Unknown Email";
+                  const name =
+                    p.user?.firstname && p.user?.lastname
+                      ? `${p.user.firstname} ${p.user.lastname}`
+                      : null;
+
+                  return <li key={i}>{name ? `${name} (${email})` : email}</li>;
+                })}
             </ul>
+
             <button
               onClick={() => setShowAddModal(false)}
               className="w-full bg-blue-600 text-white py-2 rounded-lg"
