@@ -13,10 +13,22 @@ const MOCK_USERS = [
 
 export default function MeetingsManagement() {
   // === State ===
-  const ESP32_BASE_URL = "http://192.168.0.178"; // 👈 Change to your actual ESP32 IP
-
+  const ESP32_BASE_URL = "http://192.168.0.178:80"; // 👈 Change to your actual ESP32 IP
+  const sendCommand = async (command) => {
+    try {
+      const response = await axiosInstance.post("/commands", {
+        command,
+        meetingId: selectedMeeting.meetingId,
+        // can be string or array of strings
+      });
+      toast.success(`Command queued: ${JSON.stringify(command)}`);
+    } catch (error) {
+      console.error("Failed to send command:", error);
+      toast.error("Failed to send command");
+    }
+  };
   const controlESP = async (action) => {
-    console.log(selectedMeeting.meetingId)
+    console.log(selectedMeeting.meetingId);
     try {
       if (action == "start") {
         const res = await axios.get(
@@ -27,17 +39,38 @@ export default function MeetingsManagement() {
         } else {
           toast.error("ESP32 error");
         }
+      } else if (action === "stop") {
+        endMeeting();
       } else {
-        const res = await axios.get(`${ESP32_BASE_URL}/${action}`);
-        if (res.status === 200) {
-          toast.success(`Meeting ${res.data.status}`);
-        } else {
-          toast.error("ESP32 error");
+        toast.info("Stopping ESP32 recording...");
+        const stopRes = await axios.get(`${ESP32_BASE_URL}/stop`);
+
+        if (stopRes.data.status !== "stopping") {
+          toast.error("ESP32 did not confirm stopping.");
+          return;
         }
       }
     } catch (err) {
       console.error(err);
       toast.error("Failed to communicate with ESP32");
+    }
+  };
+  const endMeeting = async (command) => {
+    try {
+      sendCommand(command);
+
+      const dbRes = await axiosInstance.put(
+        `/end-meeting/${selectedMeeting._id}`
+      );
+
+      if (dbRes.status === 200) {
+        toast.success("Meeting ended and transcription saved.");
+      } else {
+        toast.error("Transcription saving failed.");
+      }
+    } catch (err) {
+      console.error("End meeting failed:", err);
+      toast.error("Something went wrong while ending the meeting.");
     }
   };
 
@@ -95,10 +128,24 @@ export default function MeetingsManagement() {
     }
     return "Unknown User"; // Fallback in case user data is missing
   };
+  const updateMeetingStatus = async (status) => {
+    try {
+      await axiosInstance.put(`/update-status/${selectedMeeting._id}`, {
+        status,
+      });
+      toast.success(`Meeting marked as "${status}"`);
+      fetchMeetings(); // Refresh list
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to update meeting status");
+    }
+  };
+
   const fetchMeetings = async () => {
     setIsLoading(true);
     try {
       const res = await axiosInstance.get("/list-meeting");
+      console.log(res);
       setMeetings(res.data);
     } catch (err) {
       console.error("Error fetching meetings", err);
@@ -279,6 +326,7 @@ export default function MeetingsManagement() {
       toast.error("Failed to add participant");
     }
   };
+
   const changeStatus1 = (idx, status) => {
     setSelectedMeeting((prev) => {
       const updated = [...prev.participants];
@@ -435,19 +483,25 @@ export default function MeetingsManagement() {
             <h3 className="text-xl font-bold mb-4">Audio Recorder Controls</h3>
             <div className="flex gap-4">
               <button
-                onClick={() => controlESP("start")}
+                onClick={() => {
+                  sendCommand("START_RECORDING");
+                  updateMeetingStatus("started");
+                }}
                 className="bg-green-600 text-white px-4 py-2 rounded-lg"
               >
                 ▶️ Start
               </button>
               <button
-                onClick={() => controlESP("stop")}
+                onClick={() => sendCommand("STOP_RECORDING")}
                 className="bg-yellow-500 text-white px-4 py-2 rounded-lg"
               >
                 ⏸️ Pause
               </button>
               <button
-                onClick={() => controlESP("stop")}
+                onClick={() => {
+                  endMeeting('STOP_RECORDING');
+                  updateMeetingStatus("completed");
+                }}
                 className="bg-red-600 text-white px-4 py-2 rounded-lg"
               >
                 🛑 End Meeting
