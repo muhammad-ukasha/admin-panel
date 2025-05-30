@@ -52,8 +52,8 @@ export default function MeetingsManagement() {
 
     let esp32staus = await fetchESP32Status();
     // setrecordingStatus(esp32staus);
-    console.log("startRecording ", esp32staus);
-    console.log("selectedMeeting ", selectedMeeting.status);
+    // console.log("startRecording ", esp32staus);
+    // console.log("selectedMeeting ", selectedMeeting.status);
 
     if (esp32staus !== "stopped" && selectedMeeting.status !== "scheduled") {
       toast.error("Meeting must be stopped or scheduled to start recording.");
