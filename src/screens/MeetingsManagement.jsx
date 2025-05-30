@@ -12,8 +12,126 @@ const MOCK_USERS = [
 ];
 
 export default function MeetingsManagement() {
+  const [tab, setTab] = useState("upcoming");
+  const [meetings, setMeetings] = useState([]);
+  const [selectedMeeting, setSelectedMeeting] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [originalParticipants, setOriginalParticipants] = useState([]);
+  const [recordingStatus, setrecordingStatus] = useState("");
+
+  // Create/Edit Modal
+  const [showCreateEdit, setShowCreateEdit] = useState(false);
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [formMeeting, setFormMeeting] = useState({
+    id: "",
+    title: "",
+    subject: "",
+    date: "",
+    time: "",
+    description: "",
+    participants: [],
+    newParticipant: "",
+  });
+  const [participantsDetails, setParticipantsDetails] = useState({});
+  const api =  "https://fe0634b5-b9ef-4605-8312-3d014ea3ce6a-00-2i7vpu8mwwwpu.sisko.replit.dev/mobile/trigger" 
   // === State ===
-  const ESP32_BASE_URL = "http://192.168.0.178:80"; // 👈 Change to your actual ESP32 IP
+  // const ESP32_BASE_URL = "http://192.168.0.178:80"; // 👈 Change to your actual ESP32 IP
+  const fetchESP32Status = async () => {
+    try {
+      const res = await axiosInstance.get(`esp32/status`);
+      if (res.status === 200) {
+        // console.log(res.data);
+        return res.data.recordingStatus; // "recording" or "stopped"
+      }
+    } catch (err) {
+      console.error("Failed to get ESP32 status", err);
+    }
+    return null;
+  };
+  const startRecording = async () => {
+
+    let esp32staus = await fetchESP32Status();
+    // setrecordingStatus(esp32staus);
+    console.log("startRecording ", esp32staus);
+    if (esp32staus !== "stopped" && selectedMeeting.status !== "scheduled") {
+      toast.error("Meeting must be stopped or scheduled to start recording.");
+      return;
+    }
+
+    try {
+      await axios.post(`${api}`,{
+        "action": "start"
+      })
+      const meetingDateTime = new Date(
+        selectedMeeting.date + "T" + selectedMeeting.time
+      );
+      const now = new Date();
+
+      if (now < meetingDateTime) {
+        toast.error("You cannot start the meeting before its scheduled time.");
+        return;
+      }
+      // Send start command to ESP32
+      await sendCommand("START_RECORDING");
+      // Update meeting status to started
+      await updateMeetingStatus("started");
+    } catch (err) {
+      toast.error("Failed to start recording");
+    }
+  };
+
+  const pauseRecording = async () => {
+    let esp32staus = await fetchESP32Status();
+    console.log("pauseRecording", esp32staus);
+    // setrecordingStatus(esp32staus);
+
+    if (esp32staus !== "recording") {
+      toast.error("Meeting must be started to pause recording.");
+      return;
+    }
+
+    try {
+      // Send stop/pause command to ESP32
+      await sendCommand("PAUSE_RECORDING");
+      // Update meeting status to stopped (paused)
+      // await updateMeetingStatus("stopped");
+    } catch (err) {
+      toast.error("Failed to pause recording");
+    }
+  };
+  const resumeRecording = async () => {
+    let esp32staus = await fetchESP32Status();
+    console.log("resumeRecording", esp32staus);
+    // setrecordingStatus(esp32staus);
+
+    if (esp32staus !== "paused") {
+      toast.error("Recording must be paused to resume.");
+      return;
+    }
+
+    try {
+      // Send stop/pause command to ESP32
+      await sendCommand("RESUME_RECORDING");
+      // Update meeting status to stopped (paused)
+      // await updateMeetingStatus("stopped");
+    } catch (err) {
+      toast.error("Failed to pause recording");
+    }
+  };
+  const endMeetingHandler = async () => {
+    try {
+      // Send stop command to ESP32 and save transcription
+      // await sendCommand("STOP_RECORDING");
+      await endMeeting("STOP_RECORDING"); 
+      await axios.post(`${api}`,{
+        "action": "stop"
+      })// your existing endMeeting function
+      // Mark meeting as completed
+      await updateMeetingStatus("completed");
+    } catch (err) {
+      toast.error("Failed to end meeting");
+    }
+  };
   const sendCommand = async (command) => {
     try {
       const response = await axiosInstance.post("/commands", {
@@ -27,34 +145,7 @@ export default function MeetingsManagement() {
       toast.error("Failed to send command");
     }
   };
-  const controlESP = async (action) => {
-    console.log(selectedMeeting.meetingId);
-    try {
-      if (action == "start") {
-        const res = await axios.get(
-          `${ESP32_BASE_URL}/${action}?meetingId=${selectedMeeting.meetingId}`
-        );
-        if (res.status === 200) {
-          toast.success(`Meeting ${res.data.status}`);
-        } else {
-          toast.error("ESP32 error");
-        }
-      } else if (action === "stop") {
-        endMeeting();
-      } else {
-        toast.info("Stopping ESP32 recording...");
-        const stopRes = await axios.get(`${ESP32_BASE_URL}/stop`);
 
-        if (stopRes.data.status !== "stopping") {
-          toast.error("ESP32 did not confirm stopping.");
-          return;
-        }
-      }
-    } catch (err) {
-      console.error(err);
-      toast.error("Failed to communicate with ESP32");
-    }
-  };
   const endMeeting = async (command) => {
     try {
       sendCommand(command);
@@ -73,26 +164,6 @@ export default function MeetingsManagement() {
       toast.error("Something went wrong while ending the meeting.");
     }
   };
-
-  const [tab, setTab] = useState("upcoming");
-  const [meetings, setMeetings] = useState([]);
-  const [selectedMeeting, setSelectedMeeting] = useState(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [originalParticipants, setOriginalParticipants] = useState([]);
-  // Create/Edit Modal
-  const [showCreateEdit, setShowCreateEdit] = useState(false);
-  const [isEditMode, setIsEditMode] = useState(false);
-  const [formMeeting, setFormMeeting] = useState({
-    id: "",
-    title: "",
-    subject: "",
-    date: "",
-    time: "",
-    description: "",
-    participants: [],
-    newParticipant: "",
-  });
-  const [participantsDetails, setParticipantsDetails] = useState({});
 
   const fetchParticipantsDetails = async () => {
     const details = {};
@@ -310,11 +381,11 @@ export default function MeetingsManagement() {
 
     try {
       // Call backend to add participant
-      await axiosInstance.put(`/meetings/${addModalMeetingId}/participants`, {
+      const res = await axiosInstance.put(`/meetings/${addModalMeetingId}/participants`, {
         add: [email],
         remove: [],
       });
-
+      console.log(res)
       toast.success("Participant added successfully!");
 
       // Refresh meetings to show updated participants
@@ -483,25 +554,25 @@ export default function MeetingsManagement() {
             <h3 className="text-xl font-bold mb-4">Audio Recorder Controls</h3>
             <div className="flex gap-4">
               <button
-                onClick={() => {
-                  sendCommand("START_RECORDING");
-                  updateMeetingStatus("started");
-                }}
+                onClick={startRecording}
                 className="bg-green-600 text-white px-4 py-2 rounded-lg"
               >
                 ▶️ Start
               </button>
               <button
-                onClick={() => sendCommand("STOP_RECORDING")}
+                onClick={pauseRecording}
                 className="bg-yellow-500 text-white px-4 py-2 rounded-lg"
               >
                 ⏸️ Pause
               </button>
               <button
-                onClick={() => {
-                  endMeeting('STOP_RECORDING');
-                  updateMeetingStatus("completed");
-                }}
+                onClick={resumeRecording}
+                className="bg-blue-600 text-white px-4 py-2 rounded-lg"
+              >
+                ▶️ Resume
+              </button>
+              <button
+                onClick={endMeetingHandler}
                 className="bg-red-600 text-white px-4 py-2 rounded-lg"
               >
                 🛑 End Meeting
